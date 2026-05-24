@@ -1,0 +1,140 @@
+stages:
+  - install
+  - build
+  - test
+  - deploy
+
+variables:
+  NODE_VERSION: "18"
+  CACHE_KEY:
+    files:
+      - package-lock.json
+      - package.json
+
+# Define cache
+cache:
+  key: ${CACHE_KEY}
+  paths:
+    - node_modules/
+    - apps/*/node_modules/
+    - packages/*/node_modules/
+    - .next/
+
+# Job: Install dependencies
+install:dependencies:
+  stage: install
+  image: node:${NODE_VERSION}
+  script:
+    - npm ci
+  artifacts:
+    paths:
+      - node_modules/
+      - apps/*/node_modules/
+      - packages/*/node_modules/
+    expire_in: 1 hour
+  cache:
+    key: ${CACHE_KEY}
+    paths:
+      - node_modules/
+      - apps/*/node_modules/
+      - packages/*/node_modules/
+
+# Job: Build the project
+build:project:
+  stage: build
+  image: node:${NODE_VERSION}
+  needs: ["install:dependencies"]
+  script:
+    - npm run build
+  artifacts:
+    paths:
+      - apps/web/.next/
+      - dist/
+      - build/
+    expire_in: 1 day
+  cache:
+    key: ${CACHE_KEY}
+    paths:
+      - node_modules/
+      - apps/*/node_modules/
+      - packages/*/node_modules/
+      - .next/
+
+# Job: Run linting
+lint:code:
+  stage: test
+  image: node:${NODE_VERSION}
+  needs: ["install:dependencies"]
+  script:
+    - npm run lint || true
+  allow_failure: true
+  cache:
+    key: ${CACHE_KEY}
+    paths:
+      - node_modules/
+      - apps/*/node_modules/
+      - packages/*/node_modules/
+
+# Job: Run tests
+test:unit:
+  stage: test
+  image: node:${NODE_VERSION}
+  needs: ["install:dependencies"]
+  script:
+    - npm run test || true
+  artifacts:
+    reports:
+      junit: coverage/junit.xml
+    paths:
+      - coverage/
+    expire_in: 30 days
+  allow_failure: true
+  cache:
+    key: ${CACHE_KEY}
+    paths:
+      - node_modules/
+      - apps/*/node_modules/
+      - packages/*/node_modules/
+
+# Job: Deploy (example - adjust as needed)
+deploy:staging:
+  stage: deploy
+  image: node:${NODE_VERSION}
+  needs: ["build:project"]
+  script:
+    - echo "Deploying to staging environment..."
+    - npm run build
+  environment:
+    name: staging
+    url: https://staging.example.com
+  only:
+    - develop
+  cache:
+    key: ${CACHE_KEY}
+    paths:
+      - node_modules/
+      - apps/*/node_modules/
+      - packages/*/node_modules/
+      - .next/
+
+deploy:production:
+  stage: deploy
+  image: node:${NODE_VERSION}
+  needs: ["build:project"]
+  script:
+    - echo "Deploying to production environment..."
+    - npm run build
+  environment:
+    name: production
+    url: https://example.com
+  only:
+    - main
+    - master
+  cache:
+    key: ${CACHE_KEY}
+    paths:
+      - node_modules/
+      - apps/*/node_modules/
+      - packages/*/node_modules/
+      - .next/
+  when: manual
