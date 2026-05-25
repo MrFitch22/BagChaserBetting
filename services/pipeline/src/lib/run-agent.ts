@@ -1,7 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { anthropic } from "./anthropic.js";
 
-export interface AgentTool<TInput = unknown, TOutput = unknown> {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export interface AgentTool<TInput = any, TOutput = any> {
   definition: Anthropic.Tool;
   execute: (input: TInput) => Promise<TOutput>;
 }

@@ -4,22 +4,36 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "cross-env NODE_OPTIONS=--use-system-ca tsx watch src/index.ts",
+    "start": "cross-env NODE_OPTIONS=--use-system-ca node dist/index.js",
+    "agent": "cross-env NODE_OPTIONS=--use-system-ca tsx src/index.ts --agent",
+    "score": "cross-env NODE_OPTIONS=--use-system-ca tsx src/score-confidence.ts",
+    "scrape": "cross-env NODE_OPTIONS=--use-system-ca tsx src/scrapers/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js",
+    "graph": "cross-env NODE_OPTIONS=--use-system-ca tsx src/orchestration/print-graph.ts",
+    "improve": "cross-env NODE_OPTIONS=--use-system-ca tsx src/self-improvement.ts",
+    "update-scores": "cross-env NODE_OPTIONS=--use-system-ca tsx src/update-scores.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.27.0",
+    "@langchain/anthropic": "^1.4.0",
+    "@langchain/core": "^1.1.48",
+    "@langchain/langgraph": "^1.3.2",
     "@sharp-edge/shared": "workspace:*",
     "@upstash/redis": "^1.31.0",
+    "cheerio": "^1.2.0",
     "drizzle-orm": "^0.45.2",
+    "node-cron": "^4.2.1",
     "pg": "^8.11.0",
+    "playwright": "^1.60.0",
     "zod": "^3.23.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
+    "@types/node-cron": "^3.0.11",
     "@types/pg": "^8.11.0",
+    "cross-env": "^10.1.0",
     "tsx": "^4.22.3",
     "typescript": "^5.4.5"
   }

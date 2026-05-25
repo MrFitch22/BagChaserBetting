@@ -18,6 +18,20 @@ import * as schema from "../../api/src/db/schema.js";
 const ODDS_API_KEY  = process.env["ODDS_API_KEY"] ?? "";
 const ODDS_API_BASE = "https://api.the-odds-api.com/v4";
 const BOOKS         = "draftkings,fanduel,betmgm,caesars,pinnacle";
+const API_URL       = process.env["API_URL"] ?? "http://localhost:3001";
+
+async function postSharpAlert(payload: {
+  gameId: string; homeTeam: string; awayTeam: string;
+  market: string; label: string; priceBefore: number; priceAfter: number; books: string[];
+}) {
+  try {
+    await fetch(`${API_URL}/internal/sharp-alert`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...payload, detectedAt: new Date().toISOString() }),
+    });
+  } catch { /* API may not be running in CI */ }
+}
 
 // Sports active in May (NBA/NHL playoffs + MLB regular season)
 const SPORTS = [
@@ -141,8 +155,19 @@ async function main() {
         const max = Math.max(...prices);
         if (Math.abs(max - min) >= 20) {
           const [mkt, ...labelParts] = mktLabel.split(":");
-          console.log(`  SHARP MOVE: ${g.home_team} vs ${g.away_team} ${mkt} ${labelParts.join(":")} spread=${max - min}`);
+          const label = labelParts.join(":");
+          console.log(`  SHARP MOVE: ${g.home_team} vs ${g.away_team} ${mkt} ${label} spread=${max - min}`);
           sharpMoves++;
+          await postSharpAlert({
+            gameId,
+            homeTeam: g.home_team,
+            awayTeam: g.away_team,
+            market: mkt ?? "unknown",
+            label,
+            priceBefore: min,
+            priceAfter: max,
+            books: g.bookmakers?.map((b: { key: string }) => b.key) ?? [],
+          });
         }
       }
 

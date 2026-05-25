@@ -2,6 +2,7 @@ import type { AgentConfig, AgentResult, AgentTool } from "../lib/run-agent.js";
 import { runAgent } from "../lib/run-agent.js";
 import { MODELS, anthropic } from "../lib/anthropic.js";
 import { fetchGameResult } from "../tools/external-api-tools.js";
+import { getEspnGameResult, getEspnScoreboard } from "../tools/espn-tools.js";
 import {
   getPendingPicks,
   updatePickResult,
@@ -103,15 +104,27 @@ const SYSTEM_PROMPT = `You are the Verification Agent for Sharp Edge.
 
 Your job:
 1. Call get_pending_picks — get all picks awaiting a result
-2. For each pick whose game is completed (game.status='final' or game.homeScore is not null):
-   a. If game result not yet known, call fetch_game_result using game.externalId and game.sport
-   b. Call determine_pick_result with the bet details and final score
-   c. If result is not null, call update_pick_result
-3. Collect all accountIds that had picks updated
-4. Call batch_recalculate_accounts with those IDs (deduplicated)
-5. Report: picks verified, wins/losses/pushes, accounts updated
 
-Skip picks where the game is not yet final. Be methodical — process one pick fully before moving to the next.`;
+2. For each pending pick, look up the game result:
+   PRIMARY: Call get_espn_game_result with the sport and homeTeam/awayTeam names.
+   - If the game is completed (completed=true), use the score.
+   - If the game is in progress (status="in"), skip it — come back next cycle.
+   - If not found by team names, try get_espn_scoreboard to browse all games for that sport.
+   FALLBACK: If ESPN doesn't return a result, call fetch_game_result with the externalId.
+
+3. Once you have homeScore and awayScore for a completed game:
+   a. Call determine_pick_result with the bet details and final score
+   b. If result is not null, call update_pick_result
+
+4. Collect all accountIds that had picks updated (deduplicate)
+5. Call batch_recalculate_accounts with those IDs
+6. Report: picks verified, wins/losses/pushes, accounts updated
+
+Rules:
+- Skip games that are not yet final (status="pre" or "in")
+- ESPN data is authoritative — use it over DB status fields
+- Be methodical — fully process one pick before moving to the next`;
+
 
 export async function runVerificationAgent(): Promise<AgentResult> {
   const config: AgentConfig = {
@@ -120,7 +133,9 @@ export async function runVerificationAgent(): Promise<AgentResult> {
     systemPrompt: SYSTEM_PROMPT,
     tools: [
       getPendingPicks,
-      fetchGameResult,
+      getEspnGameResult,
+      getEspnScoreboard,
+      fetchGameResult,       // fallback
       determinePickResult,
       updatePickResult,
       batchRecalculateAccounts,

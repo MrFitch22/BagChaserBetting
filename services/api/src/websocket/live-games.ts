@@ -4,7 +4,17 @@ import { redis } from "../db/redis.js";
 import { games } from "../db/schema.js";
 import { eq } from "drizzle-orm";
 
-export function registerLiveGamesSocket(io: Server) {
+// Module-level ref so internal routes can broadcast without holding the Server instance
+let _handlers: ReturnType<typeof registerLiveGamesSocket> | null = null;
+export const getSocketHandlers = () => _handlers;
+
+export function registerLiveGamesSocket(io: Server): ReturnType<typeof _register> {
+  const h = _register(io);
+  _handlers = h;
+  return h;
+}
+
+function _register(io: Server) {
   const liveGames = io.of("/live");
 
   liveGames.on("connection", (socket) => {

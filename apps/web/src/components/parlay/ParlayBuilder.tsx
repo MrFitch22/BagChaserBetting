@@ -31,7 +31,7 @@ export function ParlayBuilder() {
               <p className="text-muted text-sm">Add legs from the Edge Feed to build your parlay.</p>
             </div>
           ) : (
-            <ParlayLegList legs={legs} onRemove={removeLeg} probability={probability} />
+            <ParlayLegList legs={legs} onRemove={removeLeg} {...(probability ? { probability } : {})} />
           )}
         </div>
       </div>

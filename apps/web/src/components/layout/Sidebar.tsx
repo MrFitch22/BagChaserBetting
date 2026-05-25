@@ -3,12 +3,16 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { clsx } from "clsx";
+import { useParlayStore } from "@/store/parlayStore";
 
 const NAV_ITEMS = [
   { href: "/",               label: "Edge Feed",       icon: "⚡" },
   { href: "/parlay",         label: "Parlay",          icon: "🎯" },
-  { href: "/accountability", label: "Accountability",  icon: "🔍" },
+  { href: "/parlay-builder", label: "Optimal Builder", icon: "🔥" },
+  { href: "/line-shopping",  label: "Line Shopping",   icon: "🔎" },
+  { href: "/accountability", label: "Accountability",  icon: "🏆" },
   { href: "/live",           label: "Live",            icon: "📡" },
+  { href: "/promos",         label: "Promos",          icon: "🎁" },
   { href: "/account",        label: "Account",         icon: "👤" },
 ];
 
@@ -44,6 +48,7 @@ function UserSection() {
 
 export function Sidebar() {
   const pathname = usePathname();
+  const legCount = useParlayStore((s) => s.legs.length);
 
   return (
     <aside
@@ -65,6 +70,7 @@ export function Sidebar() {
         {NAV_ITEMS.map(({ href, label, icon }) => {
           const active =
             pathname === href || (href !== "/" && pathname.startsWith(href));
+          const isParlay = href === "/parlay";
           return (
             <Link
               key={href}
@@ -77,7 +83,12 @@ export function Sidebar() {
               )}
             >
               <span>{icon}</span>
-              {label}
+              <span className="flex-1">{label}</span>
+              {isParlay && legCount > 0 && (
+                <span className="text-[10px] font-mono font-bold text-sharp-green bg-sharp-green/15 border border-sharp-green/30 rounded-full px-1.5 py-0.5 leading-none">
+                  {legCount}
+                </span>
+              )}
             </Link>
           );
         })}

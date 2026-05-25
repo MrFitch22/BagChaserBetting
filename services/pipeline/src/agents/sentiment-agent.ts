@@ -2,6 +2,8 @@ import type { AgentConfig, AgentResult, AgentTool } from "../lib/run-agent.js";
 import { runAgent } from "../lib/run-agent.js";
 import { MODELS, anthropic } from "../lib/anthropic.js";
 import { fetchSportsNews } from "../tools/external-api-tools.js";
+import { getSportSubredditPosts } from "../tools/reddit-tools.js";
+import { getEspnInjuryReport } from "../tools/espn-tools.js";
 import { getUpcomingGames, writeSentimentScore } from "../tools/db-tools.js";
 import { db, schema } from "../lib/db.js";
 import { inArray } from "drizzle-orm";
@@ -24,10 +26,13 @@ const analyseArticlesSentiment: AgentTool = {
             properties: {
               title:       { type: "string" },
               description: { type: "string" },
+              body:        { type: "string", description: "Reddit post body (alternative to description)" },
               publishedAt: { type: "string" },
+              postedAt:    { type: "string", description: "Reddit timestamp (alternative to publishedAt)" },
+              source:      { type: "string", description: "Source name e.g. 'ESPN' or 'r/nfl'" },
             },
           },
-          description: "Array of news articles to analyse",
+          description: "Array of news articles or Reddit posts to analyse",
         },
       },
       required: ["entityName", "entityType", "articles"],
@@ -38,13 +43,18 @@ const analyseArticlesSentiment: AgentTool = {
   }: {
     entityName: string;
     entityType: string;
-    articles: Array<{ title: string; description: string; publishedAt: string }>;
+    articles: Array<{ title?: string; description?: string; body?: string; publishedAt?: string; postedAt?: string; source?: string }>;
   }) => {
-    if (!articles.length) return { score: null, reason: "no_articles" };
+    if (!Array.isArray(articles) || !articles.length) return { score: null, reason: "no_articles" };
 
     const articleText = articles
-      .slice(0, 10) // cap for token budget
-      .map((a) => `[${a.publishedAt.slice(0, 10)}] ${a.title}. ${a.description ?? ""}`)
+      .slice(0, 15) // cap for token budget (increased since Reddit posts tend to be shorter)
+      .map((a) => {
+        const date = (a.publishedAt ?? a.postedAt ?? "").slice(0, 10);
+        const text = a.description ?? a.body ?? "";
+        const src  = a.source ? ` [${a.source}]` : "";
+        return `[${date}]${src} ${a.title ?? ""}. ${text}`;
+      })
       .join("\n");
 
     const response = await anthropic.messages.create({
@@ -127,14 +137,45 @@ const SYSTEM_PROMPT = `You are the Sentiment Agent for Sharp Edge.
 
 Your job:
 1. Call get_key_players_for_upcoming_games to get teams/players to research
-2. For each entity, call fetch_sports_news with a targeted query (e.g. "Kansas City Chiefs injury report")
-3. Call analyse_articles_sentiment with the returned articles
-4. If score is not null, call write_sentiment_score with the entityId
-   - For teams: use the team name as entityId (will be resolved later)
-   - For players: use the player name as entityId
-5. Summarise entities scored, average sentiment, notable findings
 
-Keep queries specific. If no articles found, skip to next entity. Aim to cover all teams in upcoming 24h games.`;
+2. For each team, gather intel from THREE sources (in priority order):
+
+   SOURCE A — ESPN Official Injury Report (most authoritative):
+   Call get_espn_injury_report with sport and teamName.
+   This returns structured data: player name, status (Out/Doubtful/Questionable/Probable), injury type.
+   Convert injury data into article-format items:
+     title: "{Player} ({Position}) — {Status}: {Type}"
+     body: "{Details if any}"
+     postedAt: injury date or today
+     source: "ESPN Official"
+
+   SOURCE B — NewsAPI (context and narrative):
+   Call fetch_sports_news with targeted queries (e.g. "Kansas City Chiefs injury report")
+   This provides narrative context around the injuries.
+
+   SOURCE C — Reddit sport subreddits (early intel, fan reaction):
+   Use get_sport_subreddit_posts with the sport subreddit + team name query:
+   - NFL teams  → subreddit: "nfl", query: "{team} injury"
+   - NBA teams  → subreddit: "nba", query: "{team} injury lineup"
+   - MLB teams  → subreddit: "baseball", query: "{team}"
+   - NHL teams  → subreddit: "hockey", query: "{team} goalie"
+   Fantasy subreddits (fantasyfootball/fantasybball/fantasybaseball/fantasyhockey) often
+   surface injury news 30–60 min before ESPN updates.
+
+3. Combine ALL items into a single array. Pass to analyse_articles_sentiment.
+
+   InjuryConcern scoring guidance:
+   - ESPN "Out" = very high (0.85-1.0)
+   - ESPN "Doubtful" = high (0.65-0.85)
+   - ESPN "Questionable" = moderate (0.35-0.65)
+   - ESPN "Probable" or "Day-To-Day" = low (0.1-0.3)
+   - No injuries on roster = 0.0
+
+4. If score is not null, call write_sentiment_score with the entityId.
+
+5. Summarise: entities scored, ESPN injuries found, average injuryConcern, notable findings.`;
+
+
 
 export async function runSentimentAgent(): Promise<AgentResult> {
   const config: AgentConfig = {
@@ -143,7 +184,9 @@ export async function runSentimentAgent(): Promise<AgentResult> {
     systemPrompt: SYSTEM_PROMPT,
     tools: [
       getKeyPlayersForUpcomingGames,
-      fetchSportsNews,
+      getEspnInjuryReport,    // primary: official ESPN injury data
+      fetchSportsNews,        // secondary: news narrative context
+      getSportSubredditPosts, // tertiary: early fan intel
       analyseArticlesSentiment,
       writeSentimentScore,
     ],

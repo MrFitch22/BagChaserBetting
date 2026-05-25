@@ -7,6 +7,8 @@ import { redis, CACHE_TTL } from "../db/redis.js";
 import { optionalAuth } from "../middleware/auth.js";
 import { requireTier } from "../middleware/tier.js";
 
+const BOOK_ORDER = ["pinnacle", "draftkings", "fanduel", "betmgm", "caesars", "pointsbet", "bet365"];
+
 export async function gamesRoutes(app: FastifyInstance) {
   // GET /api/games — upcoming + live games
   app.get("/games", { preHandler: [optionalAuth] }, async (request, reply) => {
@@ -129,17 +131,22 @@ export async function gamesRoutes(app: FastifyInstance) {
             label:        score.label,
             score:        parseFloat(score.score),
             signals: {
-              playerTrend:  parseFloat(score.playerTrend  ?? "50"),
-              sharpMoney:   parseFloat(score.sharpMoney   ?? "0"),
+              sharpMoney:   parseFloat(score.sharpMoney   ?? "50"),
+              lineMovement: parseFloat((score as { lineMovement?: string | null }).lineMovement ?? "50"),
+              matchup:      parseFloat(score.matchup      ?? "50"),
+              publicMoney:  parseFloat((score as { publicMoney?: string | null }).publicMoney  ?? "50"),
               sentiment:    parseFloat(score.sentiment    ?? "50"),
-              scheduleEdge: parseFloat(score.scheduleEdge ?? "50"),
+              playerTrend:  parseFloat(score.playerTrend  ?? "50"),
               pickTracker:  parseFloat(score.pickTracker  ?? "50"),
-              matchup:      parseFloat(score.scheduleEdge ?? "50"),
+              scheduleEdge: parseFloat(score.scheduleEdge ?? "50"),
             },
-            modelVersion: score.modelVersion ?? "v1-odds",
+            dataQuality:  parseFloat((score as { dataQuality?: string | null }).dataQuality ?? "0"),
+            modelVersion: score.modelVersion ?? "v3-dynamic",
             computedAt:   score.computedAt,
+            narrative:    (score as { narrative?: string | null }).narrative ?? null,
           },
-          isSharpMove:    Math.abs(parseFloat(score.sharpMoney ?? "0")) >= 30,
+          isSharpMove:    parseFloat(score.sharpMoney ?? "50") >= 70 &&
+                          parseFloat((score as { lineMovement?: string | null }).lineMovement ?? "50") >= 60,
           sharpDirection: null,
         };
       });
@@ -192,4 +199,93 @@ export async function gamesRoutes(app: FastifyInstance) {
       return reply.send(score);
     }
   );
+
+  // GET /api/line-shopping — current odds across all books for upcoming games
+  app.get("/line-shopping", async (_request, reply) => {
+    const cacheKey = "line-shopping:current";
+    const cached = await redis.get(cacheKey);
+    if (cached) return reply.send(cached);
+
+    const now      = new Date();
+    const cutoff   = new Date(now.getTime() + 48 * 60 * 60 * 1000);
+    const freshCut = new Date(now.getTime() - 30 * 60 * 1000); // last 30 min
+
+    const upcomingGames = await db.query.games.findMany({
+      where: and(gte(games.gameTime, now.toISOString()), lte(games.gameTime, cutoff.toISOString())),
+      orderBy: games.gameTime,
+      limit: 30,
+    });
+
+    if (!upcomingGames.length) return reply.send([]);
+
+    const gameIds = upcomingGames.map((g) => g.id);
+
+    const recentOdds = await db
+      .select()
+      .from(oddsHistory)
+      .where(and(
+        inArray(oddsHistory.gameId, gameIds),
+        gte(oddsHistory.capturedAt, freshCut.toISOString()),
+        eq(oddsHistory.isOpening, false),
+      ))
+      .orderBy(desc(oddsHistory.capturedAt));
+
+    // Build: gameId → market → label → book → best price
+    type BookEntry = { book: string; price: number; point: number | null };
+    const tree = new Map<string, Map<string, Map<string, Map<string, BookEntry>>>>();
+
+    for (const o of recentOdds) {
+      if (!o.gameId || !o.label) continue;
+      if (!tree.has(o.gameId))  tree.set(o.gameId, new Map());
+      const byMarket = tree.get(o.gameId)!;
+      if (!byMarket.has(o.market))  byMarket.set(o.market, new Map());
+      const byLabel = byMarket.get(o.market)!;
+      if (!byLabel.has(o.label))    byLabel.set(o.label, new Map());
+      const byBook = byLabel.get(o.label)!;
+      // Keep only the most recent entry per book (odds are ordered desc by capturedAt)
+      if (!byBook.has(o.book)) {
+        byBook.set(o.book, { book: o.book, price: o.price, point: o.point ? parseFloat(o.point) : null });
+      }
+    }
+
+    const result = upcomingGames.map((game) => {
+      const byMarket = tree.get(game.id);
+      if (!byMarket) return null;
+
+      const markets = [...byMarket.entries()].map(([market, byLabel]) => {
+        const lines = [...byLabel.entries()].map(([label, byBook]) => {
+          const books = BOOK_ORDER
+            .map((b) => byBook.get(b))
+            .filter((b): b is BookEntry => b !== undefined);
+
+          // Also include any books not in BOOK_ORDER
+          for (const [bk, entry] of byBook.entries()) {
+            if (!BOOK_ORDER.includes(bk)) books.push(entry);
+          }
+
+          // Best price: most positive (or least negative) American odds
+          const bestEntry = books.reduce(
+            (best, b) => b.price > best.price ? b : best,
+            books[0]!
+          );
+
+          return { label, books, bestPrice: bestEntry.price, bestBook: bestEntry.book };
+        });
+
+        return { market, lines };
+      });
+
+      return {
+        gameId:   game.id,
+        sport:    game.sport,
+        homeTeam: game.homeTeam,
+        awayTeam: game.awayTeam,
+        gameTime: game.gameTime,
+        markets,
+      };
+    }).filter(Boolean);
+
+    await redis.setex(cacheKey, 120, JSON.stringify(result)); // 2-min cache (odds move fast)
+    return reply.send(result);
+  });
 }

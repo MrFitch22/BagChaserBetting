@@ -3,6 +3,11 @@ import { runAgent } from "../lib/run-agent.js";
 import { MODELS, anthropic } from "../lib/anthropic.js";
 import { searchTwitterPicks, fetchAccountTimeline } from "../tools/external-api-tools.js";
 import {
+  getDailyPicksThread,
+  searchRedditPicks,
+  getSharpDiscussion,
+} from "../tools/reddit-tools.js";
+import {
   getUpcomingGames,
   upsertSocialAccount,
   writeTrackedPick,
@@ -109,20 +114,42 @@ const checkPickExists: AgentTool = {
 
 const SYSTEM_PROMPT = `You are the Social Scraper Agent for Sharp Edge.
 
-Your job:
-1. Call get_monitored_accounts — iterate their recent timelines via fetch_account_timeline
-2. Call search_twitter_picks with hashtags for today's sports (e.g. "#NFLpicks", "#NBAPicksToday")
-3. For each tweet found, call extract_pick_from_post
-4. If hasPick=true AND confidence is not null:
-   a. Call check_pick_exists (skip if already recorded)
-   b. Call upsert_social_account to ensure the account exists in DB
-   c. Call write_tracked_pick with the extracted data + IMMUTABLE postedAt timestamp
-5. Summarise: posts scanned, picks extracted, new picks written, duplicates skipped
+Your job (run ALL steps):
+
+STEP 1 — Reddit Daily Discussion (highest signal density):
+  a. Call get_daily_picks_thread (subreddit: "sportsbook") — returns top 100 upvoted comments
+  b. Call get_daily_picks_thread (subreddit: "sportsbetting") as backup
+  c. For each comment, call extract_pick_from_post
+
+STEP 2 — Reddit Sharp Discussion:
+  a. Call get_sharp_discussion — r/SharpSide posts from sharp/analytical bettors
+  b. For each post, call extract_pick_from_post
+
+STEP 3 — Reddit game-specific picks:
+  a. Call get_upcoming_games to see what's on today
+  b. For each game, call search_reddit_picks with query like "Chiefs Eagles picks" to find game-specific discussions
+  c. Extract picks from top results
+
+STEP 4 — Twitter/X (if available):
+  a. Call get_monitored_accounts — iterate their recent timelines via fetch_account_timeline
+  b. Call search_twitter_picks with hashtags for today's sports (e.g. "#NFLpicks", "#NBAPicksToday")
+  c. If Twitter returns 402/429, skip gracefully and log "Twitter unavailable"
+
+STEP 5 — Write picks:
+  For each item where extract_pick_from_post returns hasPick=true AND confidence is not null AND betLabel is not null:
+  a. Call check_pick_exists (skip if already recorded)
+  b. Call upsert_social_account with platform "reddit" or "twitter" as appropriate
+  c. Call write_tracked_pick with the extracted data
+
+STEP 6 — Summarise: sources checked, posts scanned, picks extracted, new picks written, duplicates skipped
 
 Important rules:
-- NEVER modify postedAt — it must be the original tweet's created_at timestamp
+- NEVER modify postedAt — it must be the original post's timestamp
 - Skip picks with no betLabel (too vague to verify)
-- Process monitored accounts first, then hashtag search`;
+- Reddit posts: use the post/comment URL as postUrl, "reddit" as platform
+- Reddit usernames: prefix with "u/" as handle (e.g. "u/SharpBettorJoe")
+- r/SharpSide and r/sportsbook comments with 50+ upvotes are highest quality — prioritise these`;
+
 
 export async function runSocialAgent(): Promise<AgentResult> {
   const config: AgentConfig = {
@@ -130,9 +157,15 @@ export async function runSocialAgent(): Promise<AgentResult> {
     model:        MODELS.agent,
     systemPrompt: SYSTEM_PROMPT,
     tools: [
+      // Reddit tools
+      getDailyPicksThread,
+      searchRedditPicks,
+      getSharpDiscussion,
+      // Twitter tools
       getMonitoredAccounts,
       fetchAccountTimeline,
       searchTwitterPicks,
+      // Processing + DB
       extractPickFromPost,
       checkPickExists,
       upsertSocialAccount,

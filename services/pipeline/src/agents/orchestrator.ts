@@ -5,6 +5,7 @@ import { runOddsAgent } from "./odds-agent.js";
 import { runSocialAgent } from "./social-agent.js";
 import { runVerificationAgent } from "./verification-agent.js";
 import { runSentimentAgent } from "./sentiment-agent.js";
+import { runAllScrapers } from "../scrapers/index.js";
 import { db, schema } from "../lib/db.js";
 import { eq, gte, count } from "drizzle-orm";
 
@@ -88,6 +89,15 @@ const runSentimentAnalysis: AgentTool = {
   execute: async () => runSentimentAgent(),
 };
 
+const runScrapers: AgentTool = {
+  definition: {
+    name: "run_scrapers",
+    description: "Run all web scrapers: public betting % from Action Network, sportsbook promotions (DraftKings/FanDuel/BetMGM/Caesars/HardRock), and casino promotions.",
+    input_schema: { type: "object" as const, properties: {}, required: [] },
+  },
+  execute: async () => { await runAllScrapers(db); return { status: "scrapers complete" }; },
+};
+
 // ─── Orchestrator system prompt ───────────────────────────────────────────────
 
 const SYSTEM_PROMPT = `You are the Pipeline Orchestrator for Sharp Edge, a sports betting analytics platform.
@@ -110,6 +120,10 @@ You decide which sub-agents to run each cycle based on current platform state. H
 - Run once in the morning (hourUTC 10-14) ahead of the day's games
 - Only run if upcomingGames > 0
 
+**Scrapers** (run_scrapers):
+- Run once every 6 hours (hourUTC 0, 6, 12, 18)
+- Fetches public betting %, sportsbook promos, and casino promos
+
 Execution rules:
 1. Call get_pipeline_state first
 2. Decide which agents to run (can be multiple)
@@ -131,6 +145,7 @@ export async function runOrchestrator(): Promise<AgentResult> {
       runSocialScrape,
       runPickVerification,
       runSentimentAnalysis,
+      runScrapers,
     ],
     maxIterations: 10, // Orchestrator should be decisive, not verbose
   };

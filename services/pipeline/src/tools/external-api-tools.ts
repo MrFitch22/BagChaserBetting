@@ -2,8 +2,10 @@ import type { AgentTool } from "../lib/run-agent.js";
 
 const ODDS_API_KEY  = process.env["ODDS_API_KEY"] ?? "";
 const ODDS_API_BASE = "https://api.the-odds-api.com/v4";
+const ODDSPAPI_KEY  = process.env["ODDSPAPI_KEY"] ?? "";
 const NEWS_API_KEY  = process.env["NEWS_API_KEY"] ?? "";
-const TWITTER_TOKEN = process.env["TWITTER_BEARER_TOKEN"] ?? "";
+// Decode URL-encoded tokens (e.g. %3D → =) that some platforms inject when copying
+const TWITTER_TOKEN = decodeURIComponent(process.env["TWITTER_BEARER_TOKEN"] ?? "");
 
 async function apiFetch<T>(url: string, headers?: Record<string, string>): Promise<T> {
   const res = await fetch(url, { headers });
@@ -71,6 +73,30 @@ export const fetchHistoricalOddsMovement: AgentTool = {
   execute: async ({ sport, eventId }: { sport: string; eventId: string }) => {
     const url = `${ODDS_API_BASE}/sports/${sport}/events/${eventId}/odds?apiKey=${ODDS_API_KEY}&regions=us&markets=spreads,totals&oddsFormat=american`;
     return apiFetch<unknown>(url);
+  },
+};
+
+// ─── Odds Papi ────────────────────────────────────────────────────────────────
+
+export const fetchOddsPapiForSport: AgentTool = {
+  definition: {
+    name: "fetch_odds_papi_for_sport",
+    description: "Pull current odds from Odds Papi for a given sport.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        sport: { type: "string" },
+      },
+      required: ["sport"],
+    },
+  },
+  execute: async ({ sport }: { sport: string }) => {
+    const url = `https://api.oddspapi.io/v1/odds?sport=${sport}&type=prematch&oddsFormat=american`;
+    // If Oddspapi is routed via RapidAPI or expects API Key differently, we handle headers here
+    const headers = { "x-api-key": ODDSPAPI_KEY };
+    const data = await apiFetch<unknown[]>(url, headers).catch(() => []);
+    // Map it similarly to the The Odds API output if possible for easy downstream use
+    return data;
   },
 };
 

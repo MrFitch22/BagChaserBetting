@@ -1,57 +1,16 @@
 import { fileURLToPath } from "url";
 import { resolve, dirname } from "path";
-import { runOrchestrator } from "./agents/orchestrator.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// Load env — pipeline reads from repo root .env.local
+// Load env BEFORE any agent module imports — lib/anthropic.ts throws at init
+// time if ANTHROPIC_API_KEY is missing, and static imports are hoisted past
+// process.loadEnvFile. Dynamic imports below run after this line.
 try {
-  process.loadEnvFile(resolve(__dirname, "../../../../.env.local"));
+  process.loadEnvFile(resolve(__dirname, "../../../.env.local"));
 } catch { /* already loaded by shell */ }
 
-// ─── Interval logic ────────────────────────────────────────────────────────────
-// During game hours (11am–3am UTC): run every 3 minutes
-// Off hours: run every 30 minutes
-// This matches the "poll odds every 3min during live games" requirement
-// without needing BullMQ or Temporal.
-
-function getIntervalMs(): number {
-  const hour = new Date().getUTCHours();
-  const isGameHours = hour >= 11 || hour <= 3;
-  return isGameHours ? 3 * 60_000 : 30 * 60_000;
-}
-
-let isRunning = false;
-
-async function tick() {
-  if (isRunning) {
-    console.log("[Scheduler] Previous cycle still running — skipping tick");
-    return;
-  }
-
-  isRunning = true;
-  const start = Date.now();
-
-  try {
-    const result = await runOrchestrator();
-    const elapsed = ((Date.now() - start) / 1000).toFixed(1);
-    console.log(
-      `[Scheduler] Cycle complete in ${elapsed}s — ${result.tokensUsed.toLocaleString()} tokens\n${result.summary}`
-    );
-  } catch (err) {
-    console.error("[Scheduler] Cycle failed:", err);
-  } finally {
-    isRunning = false;
-    scheduleNext();
-  }
-}
-
-function scheduleNext() {
-  const interval = getIntervalMs();
-  const minutes = (interval / 60_000).toFixed(0);
-  console.log(`[Scheduler] Next cycle in ${minutes}min`);
-  setTimeout(tick, interval);
-}
+const { runPipelineGraph } = await import("./orchestration/graph.js");
 
 // ─── Manual triggers via CLI args ─────────────────────────────────────────────
 // Usage: pnpm dev -- --agent odds|social|verify|sentiment|all
@@ -62,13 +21,20 @@ async function runManual(agentName: string) {
   const { runSocialAgent }       = await import("./agents/social-agent.js");
   const { runVerificationAgent } = await import("./agents/verification-agent.js");
   const { runSentimentAgent }    = await import("./agents/sentiment-agent.js");
+  const { runPipelineGraph: runGraph } = await import("./orchestration/graph.js");
+  const { runConfidenceScorer }  = await import("./score-confidence.js");
+  const { runUpdateScores }      = await import("./update-scores.js");
+  const { runSelfImprovement }   = await import("./self-improvement.js");
 
   const MAP: Record<string, () => Promise<unknown>> = {
-    odds:      runOddsAgent,
-    social:    runSocialAgent,
-    verify:    runVerificationAgent,
-    sentiment: runSentimentAgent,
-    all:       runOrchestrator,
+    odds:          runOddsAgent,
+    social:        runSocialAgent,
+    verify:        runVerificationAgent,
+    sentiment:     runSentimentAgent,
+    score:         runConfidenceScorer,
+    all:           runGraph,
+    "update-scores": runUpdateScores,
+    improve:       runSelfImprovement,
   };
 
   const fn = MAP[agentName];
@@ -90,7 +56,8 @@ if (agentArg) {
   runManual(agentArg).catch((err) => { console.error(err); process.exit(1); });
 } else {
   console.log("[Scheduler] Sharp Edge Pipeline starting…");
-  tick(); // Run immediately on startup, then schedule
+  const { startCronScheduler } = await import("./cron.js");
+  startCronScheduler();
 }
 
 // Graceful shutdown

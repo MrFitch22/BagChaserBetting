@@ -1,112 +1,139 @@
 # BagChaser Betting — Sharp Edge Platform
 
-AI-powered sports betting intelligence. Tracks sharp money movement, scores confidence on upcoming edges, and surfaces the best bets across NBA, NHL, and MLB.
+An AI-driven sports analytics engine and prediction pipeline. The platform aggregates multi-book odds, analyzes market sentiment and sharp movements, runs autonomous evaluation agents, and dynamically tunes its scoring model based on prediction performance.
 
 ---
 
-## Tech Stack
+## ─── Architecture Overview ───
+
+The platform is designed as a modular monorepo consisting of a real-time web client, a high-throughput REST/WebSocket API, and an autonomous pipeline execution engine.
+
+```
+                  ┌──────────────────────────────────────────┐
+                  │            Next.js Frontend              │
+                  │   (Optimal Parlay Builder, Dashboard)   │
+                  └────────────────────┬─────────────────────┘
+                                       │ (REST / WebSockets)
+                                       ▼
+                  ┌──────────────────────────────────────────┐
+                  │            Fastify HTTP/WS API           │
+                  │     (Drizzle ORM + Upstash Redis)        │
+                  └────────────────────┬─────────────────────┘
+                                       │ (PostgreSQL / TimescaleDB)
+                                       ▼
+                  ┌──────────────────────────────────────────┐
+                  │        Pipeline & Background Worker       │
+                  │   (LangGraph Orchestration + node-cron)  │
+                  └────────────────────┬─────────────────────┘
+                                       │
+        ┌──────────────────────────────┼──────────────────────────────┐
+        ▼                              ▼                              ▼
+ ┌──────────────┐               ┌──────────────┐               ┌──────────────┐
+ │ Odds Ingest  │               │ Edge Scorer  │               │ Self-Tuner   │
+ │ (OddsPapi /  │               │ (9-Signal    │               │ (Attribution │
+ │ The Odds API)│               │ Scorer V3)   │               │ & Grading)   │
+ └──────────────┘               └──────────────┘               └──────────────┘
+```
+
+### 1. Ingestion & Scoring Graph (LangGraph)
+The pipeline utilizes a deterministic **LangGraph StateGraph** to run data collection and analysis tasks in parallel, eliminating token overhead from generic LLM routing:
+- **Odds Ingest**: Pulls live market prices and point spreads.
+- **Social & Verification Agents**: Track, verify, and grade capper pick performance.
+- **Sentiment & Injury Checks**: Run contextual scrapes to evaluate motivation and player health.
+
+### 2. Multi-Signal Scorer (v3)
+Evaluates upcoming games using a composite scoring algorithm across multiple distinct dimensions (including sharp money divergence, rest advantages, and local weather factors). It dynamically distributes signal weights so missing data points do not dilute the confidence rating.
+
+### 3. Automated Ingestion & Feedback Loops
+Runs a continuous background process inside the pipeline daemon via node-cron:
+- **Every 10 mins**: Runs the ingestion graph to catch real-time odds movements.
+- **Hourly**: Resolves recently finished games using sports API feeds, marks results, and grades previous system predictions.
+- **Daily**: Runs the **Recursive Self-Improvement Engine**. It analyzes the grading history of the past 90 days, attributes success to correct signals, scales signal weights accordingly per sport, and writes the calibrated weights back to the database.
+
+---
+
+## ─── Tech Stack ───
 
 ### Frontend
-| Technology | Purpose |
-|---|---|
-| [Next.js 14](https://nextjs.org) | React framework — App Router, ISR, server components |
-| [React 18](https://react.dev) | UI rendering |
-| [TanStack React Query](https://tanstack.com/query) | Client-side data fetching and caching |
-| [Tailwind CSS](https://tailwindcss.com) | Utility-first styling |
-| [Recharts](https://recharts.org) | Data visualizations |
-| [Zustand](https://zustand-demo.pmnd.rs) | Client-side state management |
-| [Socket.io Client](https://socket.io) | Real-time sharp move alerts |
-| [Clerk (Next.js)](https://clerk.com) | Authentication and user management |
-| [Stripe](https://stripe.com) | Subscription billing (Pro / Sharp tiers) |
-| [Zod](https://zod.dev) | Runtime schema validation |
-| [clsx](https://github.com/lukeed/clsx) + [tailwind-merge](https://github.com/dcastil/tailwind-merge) | Conditional class merging |
+- **Framework**: Next.js 14 (App Router, Server Components, ISR) & React 18
+- **State & Query**: TanStack React Query & Zustand
+- **Styling**: Tailwind CSS
+- **Visualization**: Recharts
+- **Authentication**: Clerk (Next.js)
+- **Payments**: Stripe
 
-### API
-| Technology | Purpose |
-|---|---|
-| [Fastify 4](https://fastify.dev) | HTTP server |
-| [@fastify/cors](https://github.com/fastify/fastify-cors) | Cross-origin request handling |
-| [@fastify/rate-limit](https://github.com/fastify/fastify-rate-limit) | Per-user rate limiting |
-| [Socket.io](https://socket.io) | WebSocket server for live alerts |
-| [Drizzle ORM](https://orm.drizzle.team) | Type-safe database access |
-| [Clerk (Fastify)](https://clerk.com) | JWT verification and auth middleware |
-| [@upstash/redis](https://upstash.com) | Response caching and rate-limit state |
-| [pg](https://node-postgres.com) | PostgreSQL client |
-| [Zod](https://zod.dev) | Request validation |
+### API & Service Layer
+- **HTTP Server**: Fastify 4 & `@fastify/rate-limit`
+- **Real-Time**: Socket.io (WebSocket events for live sharp alerts)
+- **Database Access**: Drizzle ORM (Type-safe query builder)
+- **Caching**: Upstash Redis (Response caching & rate-limiting states)
 
-### Pipeline
-| Technology | Purpose |
-|---|---|
-| [The Odds API](https://the-odds-api.com) | Live odds from DraftKings, FanDuel, BetMGM, Caesars, Pinnacle |
-| [Anthropic SDK](https://docs.anthropic.com) | Claude-powered analysis agents |
-| [Drizzle ORM](https://orm.drizzle.team) | Direct DB writes for ingest and scoring |
-| [tsx](https://github.com/privatenumber/tsx) | TypeScript script runner (no build step) |
-| [pg](https://node-postgres.com) | PostgreSQL client |
+### Intelligence Pipeline & Agents
+- **Orchestration**: LangGraph (`@langchain/langgraph` & `@langchain/core`)
+- **Observability**: LangSmith (Execution traces & agent evaluation logs)
+- **Agent Models**: Claude Haiku & Sonnet (via Anthropic SDK)
+- **Scrapers**: Playwright & Cheerio
+- **Task Runner**: tsx (TypeScript execute engine)
+- **Scheduling**: node-cron
 
 ### Database & Infrastructure
-| Technology | Purpose |
-|---|---|
-| [PostgreSQL 16](https://www.postgresql.org) | Primary database |
-| [TimescaleDB](https://www.timescale.com) | Time-series extension for odds history |
-| [Redis 7](https://redis.io) | Cache and pub/sub |
-| [Docker Compose](https://docs.docker.com/compose) | Local infrastructure (Postgres + Redis) |
-| [Drizzle Kit](https://orm.drizzle.team/kit-docs/overview) | Schema migrations and DB studio |
-
-### Monorepo & Tooling
-| Technology | Purpose |
-|---|---|
-| [pnpm Workspaces](https://pnpm.io/workspaces) | Monorepo package management |
-| [Turborepo](https://turbo.build) | Build orchestration and caching |
-| [TypeScript 5](https://www.typescriptlang.org) | End-to-end type safety |
-| [ESLint](https://eslint.org) | Linting |
-| [Prettier](https://prettier.io) | Code formatting |
-
-### Shared Packages
-| Package | Contents |
-|---|---|
-| `@sharp-edge/shared` | Shared TypeScript types (`EdgeCard`, `ConfidenceScore`, `Sport`, etc.) |
-| `@sharp-edge/ui` | Shared React components (`ConfidenceBar`, etc.) |
+- **Primary Database**: PostgreSQL 16
+- **Time-Series Data**: TimescaleDB (Efficient historical odds history storage)
+- **Cache & Message Broker**: Redis 7
+- **Deployment**: Railway
 
 ---
 
-## Services
+## ─── Project Structure ───
 
 ```
 BagChaserBetting/
 ├── apps/
-│   └── web/              # Next.js frontend (port 3000)
+│   └── web/                 # Next.js web application
 ├── services/
-│   ├── api/              # Fastify REST + WebSocket API (port 3001)
-│   └── pipeline/         # Odds ingest + confidence scoring scripts
+│   ├── api/                 # Fastify REST & WS backend
+│   └── pipeline/            # LangGraph pipeline, scorer, & cron daemon
 ├── packages/
-│   ├── shared/           # Shared types
-│   └── ui/               # Shared UI components
+│   ├── shared/              # Shared TypeScript interfaces & schemas
+│   └── ui/                  # Shared React components
 └── infrastructure/
-    └── docker-compose.yml  # Postgres + Redis
+    └── docker-compose.yml   # Local Postgres & Redis instances
 ```
 
 ---
 
-## Getting Started
+## ─── Getting Started ───
 
-```powershell
-# 1. Start infrastructure
+### 1. Set Up Environment
+Copy `.env.example` to `.env.local` in the project root and populate your credentials (API keys, database URLs, auth configurations).
+
+### 2. Launch Local Database & Cache
+```bash
 cd infrastructure
 docker compose up -d
-
-# 2. Push database schema
-cd ..
-pnpm --filter @sharp-edge/api db:push
-
-# 3. Ingest live odds
-pnpm --filter @sharp-edge/pipeline exec tsx src/ingest-odds.ts
-
-# 4. Score confidence
-pnpm --filter @sharp-edge/pipeline exec tsx src/score-confidence.ts
-
-# 5. Start everything
-pnpm --filter @sharp-edge/api dev
-pnpm --filter @sharp-edge/web dev
 ```
 
-Copy `.env.example` to `.env.local` at the project root and fill in your keys before running.
+### 3. Initialize Schema & Migrations
+```bash
+cd ..
+pnpm --filter @sharp-edge/api db:push
+```
+
+### 4. Run Scripts Manually (Optional)
+```bash
+# Seed initial baseline weights & run weight optimizer
+pnpm --filter @sharp-edge/pipeline improve
+
+# Run hourly score updater & grader
+pnpm --filter @sharp-edge/pipeline update-scores
+
+# Perform a single edge confidence scoring run
+pnpm --filter @sharp-edge/pipeline score
+```
+
+### 5. Start Development Servers
+Run the full local stack (Web, API, and Pipeline Daemon with background crons):
+```bash
+pnpm dev
+```
+*(Alternatively, target specific packages: `pnpm --filter @sharp-edge/pipeline dev`, `pnpm --filter @sharp-edge/api dev`, or `pnpm --filter @sharp-edge/web dev`)*

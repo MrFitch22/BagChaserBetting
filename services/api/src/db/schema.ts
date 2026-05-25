@@ -72,6 +72,11 @@ export const confidenceScores = pgTable("confidence_scores", {
   sentiment:     numeric("sentiment", { precision: 5, scale: 2 }),
   scheduleEdge:  numeric("schedule_edge", { precision: 5, scale: 2 }),
   pickTracker:   numeric("pick_tracker", { precision: 5, scale: 2 }),
+  matchup:       numeric("matchup", { precision: 5, scale: 2 }),
+  publicMoney:   numeric("public_money",   { precision: 5, scale: 2 }),
+  lineMovement:  numeric("line_movement",  { precision: 5, scale: 2 }),
+  dataQuality:   numeric("data_quality",   { precision: 4, scale: 3 }),
+  narrative:     text("narrative"),
   modelVersion:  varchar("model_version", { length: 32 }),
   computedAt:    timestamptz("computed_at").defaultNow().notNull(),
 });
@@ -163,6 +168,89 @@ export const userParlays = pgTable("user_parlays", {
   placedAt:     timestamptz("placed_at"),
   createdAt:    timestamptz("created_at").defaultNow().notNull(),
 });
+
+// ─── Scraper data ────────────────────────────────────────────────────────────
+
+export const publicBettingData = pgTable("public_betting_data", {
+  id:         uuid("id").primaryKey().defaultRandom(),
+  gameId:     uuid("game_id").references(() => games.id),
+  market:     varchar("market", { length: 64 }).notNull(),
+  label:      varchar("label", { length: 128 }).notNull(),
+  betsPct:    numeric("bets_pct",  { precision: 5, scale: 2 }), // % of bets placed on this side
+  moneyPct:   numeric("money_pct", { precision: 5, scale: 2 }), // % of money wagered on this side
+  source:     varchar("source",    { length: 64 }).notNull(),   // 'action_network' | 'covers'
+  capturedAt: timestamptz("captured_at").defaultNow().notNull(),
+});
+
+export const bookPromos = pgTable("book_promos", {
+  id:          uuid("id").primaryKey().defaultRandom(),
+  book:        varchar("book",        { length: 64 }).notNull(),
+  title:       varchar("title",       { length: 256 }).notNull(),
+  description: text("description"),
+  promoType:   varchar("promo_type",  { length: 64 }),  // 'odds_boost' | 'free_bet' | 'deposit_match' | 'parlay_insurance'
+  value:       varchar("value",       { length: 128 }), // '$20 free bet', '25% SGP boost'
+  url:         varchar("url",         { length: 512 }),
+  expiresAt:   timestamptz("expires_at"),
+  capturedAt:  timestamptz("captured_at").defaultNow().notNull(),
+});
+
+export const casinoPromos = pgTable("casino_promos", {
+  id:          uuid("id").primaryKey().defaultRandom(),
+  casino:      varchar("casino",      { length: 128 }).notNull(),
+  title:       varchar("title",       { length: 256 }).notNull(),
+  description: text("description"),
+  promoType:   varchar("promo_type",  { length: 64 }),  // 'welcome_bonus' | 'free_spins' | 'reload'
+  value:       varchar("value",       { length: 128 }),
+  url:         varchar("url",         { length: 512 }),
+  rating:      numeric("rating",      { precision: 3, scale: 1 }),
+  capturedAt:  timestamptz("captured_at").defaultNow().notNull(),
+});
+
+// ─── Self-improvement engine ──────────────────────────────────────────────────
+
+// Captures the system's top +EV predictions before each game starts.
+// After the game, the result is written back — this is the training data
+// the self-improvement engine uses to tune signal weights.
+export const systemPredictions = pgTable(
+  "system_predictions",
+  {
+    id:             uuid("id").primaryKey().defaultRandom(),
+    gameId:         uuid("game_id").references(() => games.id).notNull(),
+    market:         varchar("market",  { length: 64 }).notNull(),
+    label:          varchar("label",   { length: 128 }).notNull(),
+    confidenceScore: numeric("confidence_score", { precision: 5, scale: 2 }).notNull(),
+    // Raw signal values at prediction time — used for attribution analysis
+    signalValues:   jsonb("signal_values").notNull(), // { sharpMoney: 72, sentiment: 61, ... }
+    sport:          varchar("sport",   { length: 32 }).notNull(),
+    predictedAt:    timestamptz("predicted_at").defaultNow().notNull(),
+    // Filled after game ends
+    result:         varchar("result",  { length: 16 }),  // 'win' | 'loss' | 'push'
+    homeScore:      integer("home_score"),
+    awayScore:      integer("away_score"),
+    gradedAt:       timestamptz("graded_at"),
+  },
+  (t) => ({
+    gameMarketIdx: index("idx_sys_pred_game").on(t.gameId, t.market, t.label),
+    ungradedIdx:   index("idx_sys_pred_ungraded").on(t.result, t.predictedAt),
+  })
+);
+
+// Dynamic signal weights per sport — updated nightly by the self-improvement engine.
+// Seeded from the hardcoded SPORT_WEIGHTS on first run.
+export const modelWeights = pgTable(
+  "model_weights",
+  {
+    id:         uuid("id").primaryKey().defaultRandom(),
+    sport:      varchar("sport",  { length: 32 }).notNull(), // 'NFL' | 'NBA' | 'MLB' | 'NHL' | 'DEFAULT'
+    signal:     varchar("signal", { length: 64 }).notNull(), // 'sharpMoney' | 'lineMovement' | ...
+    weight:     numeric("weight", { precision: 6, scale: 4 }).notNull(),
+    sampleSize: integer("sample_size").default(0).notNull(), // predictions used to derive this weight
+    updatedAt:  timestamptz("updated_at").defaultNow().notNull(),
+  },
+  (t) => ({
+    sportSignalIdx: uniqueIndex("idx_model_weights_sport_signal").on(t.sport, t.signal),
+  })
+);
 
 // ─── Affiliate tracking ───────────────────────────────────────────────────────
 

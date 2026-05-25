@@ -5,6 +5,7 @@ import {
   fetchOddsForSport,
   fetchHistoricalOddsMovement,
 } from "../tools/external-api-tools.js";
+import { getEspnScoreboard, getEspnGameOdds } from "../tools/espn-tools.js";
 import { getUpcomingGames, upsertGame, writeOddsBatch } from "../tools/db-tools.js";
 
 // Sharp move detection runs in the agent loop — it needs state across tool calls
@@ -12,10 +13,23 @@ import { getUpcomingGames, upsertGame, writeOddsBatch } from "../tools/db-tools.
 import type { AgentTool } from "../lib/run-agent.js";
 import { Redis } from "@upstash/redis";
 
-const redis = new Redis({
-  url:   process.env["REDIS_URL"] ?? "",
-  token: process.env["REDIS_TOKEN"] ?? "",
-});
+const isUpstash = process.env["REDIS_URL"]?.startsWith("https://");
+
+const redis = isUpstash
+  ? new Redis({ url: process.env["REDIS_URL"]!, token: process.env["REDIS_TOKEN"] ?? "" })
+  : { get: async () => null, setex: async () => "OK" } as unknown as Redis;
+
+const API_URL = process.env["API_URL"] ?? "http://localhost:3001";
+
+async function postSharpAlert(payload: object) {
+  try {
+    await fetch(`${API_URL}/internal/sharp-alert`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  } catch { /* API may not be running */ }
+}
 
 /** Checks prior cached odds and emits a flag if the line moved significantly */
 const detectAndCacheLineMovement: AgentTool = {
@@ -50,8 +64,15 @@ const detectAndCacheLineMovement: AgentTool = {
     const isSignificant = Math.abs(priceDelta) >= 5 || Math.abs(pointDelta) >= 0.5;
     const isSharpMove   = Math.abs(priceDelta) >= 15 || Math.abs(pointDelta) >= 1.5;
 
-    // Cache for 6 hours
     await redis.setex(cacheKey, 21_600, JSON.stringify({ price: newPrice, point: newPoint ?? null }));
+
+    if (isSharpMove && prior) {
+      await postSharpAlert({
+        gameId, market, label: label ?? "",
+        priceBefore: prior.price, priceAfter: newPrice,
+        books: [book], detectedAt: new Date().toISOString(),
+      });
+    }
 
     return { priorPrice: prior?.price ?? null, priceDelta, pointDelta, isSignificant, isSharpMove };
   },
@@ -59,17 +80,30 @@ const detectAndCacheLineMovement: AgentTool = {
 
 const SYSTEM_PROMPT = `You are the Odds Ingestion Agent for Sharp Edge, a sports betting analytics platform.
 
-Your job is to:
+Your job (complete ALL steps efficiently):
+
 1. Call get_upcoming_games to see what games need fresh odds (next 48 hours)
-2. For each sport with upcoming games, call fetch_odds_for_sport
-3. For every game returned, call upsert_game to keep the games table current
-4. For every odds line, call detect_and_cache_line_movement — only write to DB if isSignificant=true
-5. Call write_odds_batch with all significant movements (batching is critical for performance)
-6. Summarise: how many games processed, how many odds records written, how many sharp moves flagged
 
-Sports to cover: NFL (americanfootball_nfl), NBA (basketball_nba), MLB (baseball_mlb), NHL (icehockey_nhl)
+2. For each SPORT with upcoming games, call fetch_odds_for_sport ONCE (covers all games for that sport).
+   Call all sports IN PARALLEL — one tool call per sport in the same message.
+   Sports: NFL=americanfootball_nfl, NBA=basketball_nba, MLB=baseball_mlb, NHL=icehockey_nhl
 
-Be efficient — batch your writes. If the odds API key is missing or returns an error, note it and finish gracefully.`;
+3. For every game returned, call upsert_game (batch these in parallel too — one call per game).
+
+4. For every odds line in every game, call detect_and_cache_line_movement.
+   CRITICAL: Call as many as possible IN PARALLEL — do NOT call them one at a time.
+   Process ALL lines for ALL books for ALL games in as few message turns as possible.
+   Each call is cheap and independent — parallelize aggressively.
+
+5. Collect all results where isSignificant=true. Call write_odds_batch ONCE with all of them.
+
+6. Summarise: sports covered, games processed, total lines checked, significant movements written, sharp moves flagged.
+
+Rules:
+- Parallel tool calls are free — use them. Never wait for one line before checking the next.
+- Skip ESPN enrichment unless you finish steps 1-5 with iterations to spare.
+- If odds API key missing or returns error, note it and finish gracefully.`;
+
 
 export async function runOddsAgent(): Promise<AgentResult> {
   const config: AgentConfig = {
@@ -80,11 +114,13 @@ export async function runOddsAgent(): Promise<AgentResult> {
       getUpcomingGames,
       fetchOddsForSport,
       fetchHistoricalOddsMovement,
+      getEspnScoreboard,   // cross-reference game status + ESPN BET odds
+      getEspnGameOdds,     // deep ESPN BET/Caesars/DK odds per event
       upsertGame,
       detectAndCacheLineMovement,
       writeOddsBatch,
     ],
-    maxIterations: 30,
+    maxIterations: 60,
   };
 
   return runAgent(config, `Run odds ingestion now. Current UTC time: ${new Date().toISOString()}`);

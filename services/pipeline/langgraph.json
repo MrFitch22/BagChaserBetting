@@ -1,0 +1,7 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "pipeline": "./src/orchestration/graph.ts:pipelineGraph"
+  },
+  "env": ".env.local"
+}
