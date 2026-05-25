@@ -2,7 +2,6 @@ import Fastify from "fastify";
 import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
 import { Server } from "socket.io";
-import { createServer } from "http";
 import { gamesRoutes } from "./routes/games.js";
 import { sellersRoutes } from "./routes/sellers.js";
 import { parlaysRoutes } from "./routes/parlays.js";
@@ -46,14 +45,6 @@ async function bootstrap() {
   await app.register(parlaysRoutes, { prefix: "/api" });
   await app.register(usersRoutes, { prefix: "/api" });
 
-  // Attach Socket.io to the same HTTP server
-  const httpServer = createServer(app.server);
-  const io = new Server(httpServer, {
-    cors: { origin: ALLOWED_ORIGINS, credentials: true },
-  });
-
-  registerLiveGamesSocket(io);
-
   // Graceful shutdown
   const shutdown = async () => {
     app.log.info("Shutting down...");
@@ -65,6 +56,14 @@ async function bootstrap() {
   process.on("SIGINT", shutdown);
 
   await app.listen({ port: PORT, host: HOST });
+
+  // Attach Socket.io directly to Fastify's underlying HTTP server (must be after listen)
+  const io = new Server(app.server, {
+    cors: { origin: ALLOWED_ORIGINS, credentials: true },
+  });
+
+  registerLiveGamesSocket(io);
+
   app.log.info(`Sharp Edge API running on http://${HOST}:${PORT}`);
 }
 

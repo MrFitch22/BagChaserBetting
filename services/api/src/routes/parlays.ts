@@ -5,7 +5,7 @@ import { db } from "../db/client.js";
 import { userParlays, users } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requireTier } from "../middleware/tier.js";
-import { americanToImplied } from "@sharp-edge/shared";
+import { americanToImplied } from "../utils/odds.js";
 
 const ParlayLegSchema = z.object({
   gameId: z.string().uuid(),

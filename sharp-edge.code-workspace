@@ -1,0 +1,17 @@
+{
+  "folders": [
+    { "name": "Root", "path": "." },
+    { "name": "Web App", "path": "apps/web" },
+    { "name": "Mobile", "path": "apps/mobile" },
+    { "name": "API Service", "path": "services/api" },
+    { "name": "Scoring Engine", "path": "services/scoring" },
+    { "name": "Ingestion", "path": "services/ingestion" },
+    { "name": "Social Scraper", "path": "services/social-scraper" },
+    { "name": "Shared Types", "path": "packages/shared" },
+    { "name": "UI Library", "path": "packages/ui" }
+  ],
+  "settings": {},
+  "extensions": {
+    "recommendations": []
+  }
+}

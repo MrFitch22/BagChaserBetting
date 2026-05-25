@@ -1,4 +1,4 @@
-export { TierBadge } from "./TierBadge.js";
-export { ResultPill } from "./ResultPill.js";
-export { ConfidenceBar } from "./ConfidenceBar.js";
-export { ROIChart } from "./ROIChart.js";
+export { TierBadge } from "./TierBadge";
+export { ResultPill } from "./ResultPill";
+export { ConfidenceBar } from "./ConfidenceBar";
+export { ROIChart } from "./ROIChart";

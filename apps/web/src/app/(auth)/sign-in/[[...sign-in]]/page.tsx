@@ -5,7 +5,7 @@ export default function SignInPage() {
     <div className="flex min-h-screen items-center justify-center bg-bg">
       <div className="w-full max-w-md">
         <div className="mb-8 text-center">
-          <h1 className="font-display text-3xl font-bold text-text">Sharp Edge</h1>
+          <h1 className="font-display text-3xl font-bold text-text">BagChaser</h1>
           <p className="mt-2 text-muted">Pick accountability. Parlay intelligence.</p>
         </div>
         <SignIn

@@ -1,10 +1,38 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useAuth } from "@clerk/nextjs";
 import type { EdgeCard as EdgeCardType } from "@sharp-edge/shared";
 import { ConfidenceBar } from "@sharp-edge/ui";
 import { api } from "@/lib/api";
+
+const SPORTS = ["All", "NBA", "NHL", "MLB", "NFL"] as const;
+type SportFilter = (typeof SPORTS)[number];
+
+function SportNav({ active, onChange, available }: {
+  active: SportFilter;
+  onChange: (s: SportFilter) => void;
+  available: Set<string>;
+}) {
+  return (
+    <div className="flex gap-1 border-b border-border pb-3 mb-4">
+      {SPORTS.filter((s) => s === "All" || available.has(s)).map((sport) => (
+        <button
+          key={sport}
+          onClick={() => onChange(sport)}
+          className={[
+            "px-3 py-1.5 rounded text-xs font-mono font-semibold tracking-wide transition-colors",
+            active === sport
+              ? "bg-sharp-green/15 text-sharp-green border border-sharp-green/30"
+              : "text-muted hover:text-text hover:bg-white/[0.04] border border-transparent",
+          ].join(" ")}
+        >
+          {sport}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 function EdgeCardSkeleton() {
   return (
@@ -67,27 +95,35 @@ function EdgeCard({ edge }: { edge: EdgeCardType }) {
   );
 }
 
+function LoadingSkeleton() {
+  return (
+    <div>
+      <div className="flex gap-1 border-b border-border pb-3 mb-4">
+        {["All", "NBA", "NHL"].map((s) => (
+          <div key={s} className="h-7 w-12 rounded bg-white/5 animate-pulse" />
+        ))}
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        {Array.from({ length: 6 }).map((_, i) => <EdgeCardSkeleton key={i} />)}
+      </div>
+    </div>
+  );
+}
+
 export function EdgeFeed() {
-  const { getToken } = useAuth();
+  const [mounted, setMounted] = useState(false);
+  const [activeSport, setActiveSport] = useState<SportFilter>("All");
+
+  useEffect(() => { setMounted(true); }, []);
 
   const { data: edges, isLoading, error } = useQuery({
     queryKey: ["top-edges"],
-    queryFn: async () => {
-      const token = await getToken();
-      return api.get<EdgeCardType[]>("/api/scores/top-edges", token ?? undefined);
-    },
+    queryFn: () => api.get<(EdgeCardType & { sport: string })[]>("/api/scores/top-edges"),
     refetchInterval: 5 * 60 * 1000,
+    retry: false,
   });
 
-  if (isLoading) {
-    return (
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {Array.from({ length: 6 }).map((_, i) => (
-          <EdgeCardSkeleton key={i} />
-        ))}
-      </div>
-    );
-  }
+  if (!mounted || isLoading) return <LoadingSkeleton />;
 
   if (error) {
     return (
@@ -109,11 +145,25 @@ export function EdgeFeed() {
     );
   }
 
+  const available = new Set(edges.map((e) => e.sport?.toUpperCase()));
+  const filtered = activeSport === "All"
+    ? edges
+    : edges.filter((e) => e.sport?.toUpperCase() === activeSport);
+
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-      {edges.map((edge) => (
-        <EdgeCard key={`${edge.gameId}-${edge.market}-${edge.label}`} edge={edge} />
-      ))}
+    <div>
+      <SportNav active={activeSport} onChange={setActiveSport} available={available} />
+      {filtered.length === 0 ? (
+        <div className="rounded-lg border border-border bg-surface p-8 text-center">
+          <p className="text-muted text-sm">No edges for {activeSport} right now.</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {filtered.map((edge) => (
+            <EdgeCard key={`${edge.gameId}-${edge.market}-${edge.label}`} edge={edge} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

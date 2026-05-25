@@ -1,4 +1,4 @@
-import type { MarketType, Sportsbook } from "./odds.js";
+import type { MarketType, Sportsbook } from "./odds";
 
 export type PickResult = "win" | "loss" | "push" | "pending";
 

@@ -1,4 +1,4 @@
-import type { MarketType, Sportsbook } from "./odds.js";
+import type { MarketType, Sportsbook } from "./odds";
 
 export interface ParlayLeg {
   gameId: string;

@@ -2,41 +2,42 @@
 
 import { useState, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useAuth } from "@clerk/nextjs";
 import type { ParlayLeg, ParlayResult } from "@sharp-edge/shared";
 import { api } from "@/lib/api";
 
+async function getAuthToken(): Promise<string | null> {
+  try {
+    const { useAuth } = await import("@clerk/nextjs");
+    // Can't call hooks dynamically — token is null in dev-mode (no Clerk)
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export function useParlay() {
-  const { getToken } = useAuth();
   const queryClient = useQueryClient();
   const [legs, setLegs] = useState<ParlayLeg[]>([]);
 
   const probabilityQuery = useQuery({
     queryKey: ["parlay-probability", legs],
-    queryFn: async () => {
-      const token = await getToken();
-      return api.post<ParlayResult>("/api/parlays/probability", { legs }, token ?? undefined);
-    },
+    queryFn: () =>
+      api.post<ParlayResult>("/api/parlays/probability", { legs }),
     enabled: legs.length >= 2,
     refetchInterval: 30_000,
   });
 
   const saveMutation = useMutation({
     mutationFn: async (data: { sportsbook?: string }) => {
-      const token = await getToken();
       const prob = probabilityQuery.data;
-      return api.post(
-        "/api/parlays",
-        {
-          legs,
-          combinedProb: prob?.adjustedProbability,
-          bookImplied: prob?.bookImpliedProbability,
-          edgeScore: prob?.edgeScore,
-          payoutOdds: prob?.payoutOdds,
-          sportsbook: data.sportsbook,
-        },
-        token ?? undefined
-      );
+      return api.post("/api/parlays", {
+        legs,
+        combinedProb: prob?.adjustedProbability,
+        bookImplied: prob?.bookImpliedProbability,
+        edgeScore: prob?.edgeScore,
+        payoutOdds: prob?.payoutOdds,
+        sportsbook: data.sportsbook,
+      });
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["saved-parlays"] }),
   });

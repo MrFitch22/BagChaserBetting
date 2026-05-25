@@ -5,12 +5,15 @@ import {
   integer,
   numeric,
   boolean,
-  timestamptz,
+  timestamp,
   text,
   jsonb,
   index,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
+
+// drizzle-orm <0.31 does not export `timestamptz`; use timestamp with withTimezone instead
+const timestamptz = (name: string) => timestamp(name, { withTimezone: true, mode: "string" });
 
 // ─── Core entities ────────────────────────────────────────────────────────────
 

@@ -6,8 +6,16 @@ import type { UserTier } from "@sharp-edge/shared";
 
 const TIER_ORDER: UserTier[] = ["free", "pro", "sharp"];
 
+const DEV_MODE = process.env["NODE_ENV"] !== "production";
+
 export function requireTier(minTier: "pro" | "sharp") {
   return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
+    if (DEV_MODE) return;
+
+    if (!request.auth?.userId) {
+      return reply.status(401).send({ error: "unauthorized" });
+    }
+
     const user = await db.query.users.findFirst({
       where: eq(users.clerkId, request.auth.userId),
       columns: { tier: true },

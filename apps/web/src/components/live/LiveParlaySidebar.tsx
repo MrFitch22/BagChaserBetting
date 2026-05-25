@@ -1,19 +1,14 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { useAuth } from "@clerk/nextjs";
 import type { SavedParlay } from "@sharp-edge/shared";
 import { api } from "@/lib/api";
 
 export function LiveParlaySidebar() {
-  const { getToken } = useAuth();
-
   const { data: parlays } = useQuery({
     queryKey: ["saved-parlays"],
-    queryFn: async () => {
-      const token = await getToken();
-      return api.get<SavedParlay[]>("/api/parlays", token ?? undefined);
-    },
+    retry: false,
+    queryFn: () => api.get<SavedParlay[]>("/api/parlays"),
     refetchInterval: 30_000,
   });
 

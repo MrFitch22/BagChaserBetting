@@ -1,13 +1,21 @@
 import { Redis } from "@upstash/redis";
 
-if (!process.env["REDIS_URL"]) {
-  throw new Error("REDIS_URL is required");
+// Upstash uses HTTPS REST; a plain redis:// URL means local dev — use a no-op cache
+const isUpstash = process.env["REDIS_URL"]?.startsWith("https://");
+
+interface RedisLike {
+  get<T>(key: string): Promise<T | null>;
+  setex(key: string, seconds: number, value: string | number | object): Promise<string | null>;
 }
 
-export const redis = new Redis({
-  url: process.env["REDIS_URL"],
-  token: process.env["REDIS_TOKEN"] ?? "",
-});
+const devNoop: RedisLike = {
+  get: async () => null,
+  setex: async () => null,
+};
+
+export const redis: RedisLike = isUpstash
+  ? new Redis({ url: process.env["REDIS_URL"]!, token: process.env["REDIS_TOKEN"] ?? "" })
+  : devNoop;
 
 export const CACHE_TTL = {
   odds: 300,         // 5 minutes

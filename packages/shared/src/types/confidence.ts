@@ -1,4 +1,4 @@
-import type { MarketType } from "./odds.js";
+import type { MarketType } from "./odds";
 
 export interface ConfidenceSignals {
   playerTrend: number; // 0–100
